@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Manutenção Air 1 | HealthGo</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <h1>Manutenção Air 1</h1>
+
+  <!-- Faixa de KPIs -->
+  <section class="kpis" id="kpis">
+    <!-- Preenchido por js/render-kpis.js -->
+  </section>
+
+  <!-- Controles -->
+  <div class="controles">
+    <div class="alternador">
+      <button id="btn-kanban" class="ativo">Kanban</button>
+      <button id="btn-lista">Lista</button>
+    </div>
+    <div class="filtros">
+      <select id="filtro-status">
+        <option value="">Todos os status</option>
+      </select>
+      <select id="filtro-cliente">
+        <option value="">Todos os clientes</option>
+      </select>
+    </div>
+    <div class="atualizado">Atualizado às <span id="hora-atualizacao">—</span></div>
+  </div>
+
+  <!-- Visualização Kanban -->
+  <section id="view-kanban" class="kanban"></section>
+
+  <!-- Visualização Lista -->
+  <section id="view-lista" class="lista hidden">
+    <table>
+      <thead>
+        <tr>
+          <th data-coluna="hgid">HGID</th>
+          <th data-coluna="numero_serie">Nº Série</th>
+          <th data-coluna="cliente">Cliente</th>
+          <th data-coluna="status_atual">Status</th>
+          <th data-coluna="dias_na_fabrica">Dias na fábrica</th>
+          <th data-coluna="prazo_manutencao">Prazo manutenção</th>
+          <th data-coluna="dias_para_prazo">SLA</th>
+        </tr>
+      </thead>
+      <tbody id="tabela-corpo"></tbody>
+    </table>
+  </section>
+
+  <!-- Faixa de alertas -->
+  <div class="alertas" id="alertas">
+    <span id="alertas-texto"></span>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

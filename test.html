@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Testes — Manutenção Air 1</title>
+  <style>
+    body { font-family: monospace; padding: 24px; line-height: 1.6; }
+    .ok { color: green; }
+    .fail { color: red; font-weight: bold; }
+    .secao { margin: 24px 0; padding: 12px; background: #f5f5f5; border-radius: 8px; }
+    h2 { color: #233A4A; margin-top: 24px; }
+    pre { background: #fff; padding: 8px; border: 1px solid #ddd; border-radius: 4px; overflow-x: auto; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Testes — Manutenção Air 1</h1>
+  <p>Veja o resultado abaixo e o console (F12).</p>
+
+  <div id="resultados"></div>
+
+  <script type="module">
+    import { lerAba, lerEquipamentosEmCicloSLA, lerConfiguracoes } from './js/sheets-api.js';
+
+    const div = document.getElementById('resultados');
+
+    function log(msg, cls) {
+      const p = document.createElement('p');
+      p.className = cls;
+      p.textContent = msg;
+      div.appendChild(p);
+      console.log(msg);
+    }
+
+    function logBloco(titulo) {
+      const h = document.createElement('h2');
+      h.textContent = titulo;
+      div.appendChild(h);
+    }
+
+    async function rodar() {
+      // Teste 1: lerAba('equipamentos')
+      logBloco('Teste 1: lerAba("equipamentos")');
+      try {
+        const eq = await lerAba('equipamentos');
+        log(`✓ Leu ${eq.length} linhas`, 'ok');
+        log('Primeira linha (se houver):', '');
+        const pre = document.createElement('pre');
+        pre.textContent = JSON.stringify(eq[0] || {}, null, 2);
+        div.appendChild(pre);
+      } catch (e) {
+        log(`✗ FALHOU: ${e.message}`, 'fail');
+      }
+
+      // Teste 2: lerConfiguracoes
+      logBloco('Teste 2: lerConfiguracoes()');
+      try {
+        const cfg = await lerConfiguracoes();
+        log(`✓ Leu configurações`, 'ok');
+        const pre = document.createElement('pre');
+        pre.textContent = JSON.stringify(cfg, null, 2);
+        div.appendChild(pre);
+        console.assert(cfg.limite_sla_dias, 'limite_sla_dias não encontrado');
+      } catch (e) {
+        log(`✗ FALHOU: ${e.message}`, 'fail');
+      }
+
+      // Teste 3: lerEquipamentosEmCicloSLA
+      logBloco('Teste 3: lerEquipamentosEmCicloSLA()');
+      try {
+        const em = await lerEquipamentosEmCicloSLA();
+        log(`✓ Leu ${em.length} equipamentos em ciclo SLA`, 'ok');
+      } catch (e) {
+        log(`✗ FALHOU: ${e.message}`, 'fail');
+      }
+    }
+
+    rodar();
+  </script>
+</body>
+</html>
