@@ -1,7 +1,7 @@
 import { diasNaFabrica, diasAteOPrazo, classificarSLA } from './sla.js';
 
-// Lista de status (confirmada com produção em 2026-05-25)
-const STATUS_ORDEM = ['Pré-calibração', 'Em calibração', 'Pós-calibração'];
+// Lista de status (confirmada com produção em 2026-05-25, atualizada 2026-05-26)
+const STATUS_ORDEM = ['Manutenção', 'Pré-calibração', 'Em calibração', 'Pós-calibração'];
 
 /**
  * Renderiza o Kanban no <section id="view-kanban">.

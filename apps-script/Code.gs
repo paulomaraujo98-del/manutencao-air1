@@ -6,39 +6,35 @@ const NOME_ABA_RESPOSTAS = 'respostas_form';
 const NOME_ABA_ALERTAS = 'alertas';
 const NOME_ABA_CONFIG = 'configuracoes';
 
-// Colunas da aba equipamentos (1-indexed para getRange):
+// Colunas da aba equipamentos (1-indexed):
 // 1=hgid, 2=numero_serie, 3=cliente, 4=data_entrada, 5=prazo_analise,
 // 6=prazo_manutencao, 7=status_atual, 8=data_retorno_cliente, 9=observacoes
 const COL = {
-  HGID: 1,
-  NS: 2,
-  CLIENTE: 3,
-  DATA_ENTRADA: 4,
-  PRAZO_ANALISE: 5,
-  PRAZO_MANUTENCAO: 6,
-  STATUS_ATUAL: 7,
-  DATA_RETORNO: 8,
-  OBSERVACOES: 9
+  HGID: 1, NS: 2, CLIENTE: 3,
+  DATA_ENTRADA: 4, PRAZO_ANALISE: 5, PRAZO_MANUTENCAO: 6,
+  STATUS_ATUAL: 7, DATA_RETORNO: 8, OBSERVACOES: 9
 };
 
-/**
- * Função chamada automaticamente quando alguém submete o Form.
- */
 function onFormSubmit(e) {
   try {
-    const valores = e.values; // [timestamp, mensagem_colada]
+    const valores = e.values;
     const mensagem = valores[1];
 
-    const equipamentosNaMensagem = parsearMensagem(mensagem);
-    console.log(`Mensagem parseada: ${equipamentosNaMensagem.length} equipamentos.`);
+    const { equipamentos, linhasInvalidas } = parsearMensagem(mensagem);
+    console.log(`Mensagem parseada: ${equipamentos.length} equipamentos, ${linhasInvalidas.length} linhas inválidas.`);
 
     const planilha = SpreadsheetApp.getActiveSpreadsheet();
     const abaEquip = planilha.getSheetByName(NOME_ABA_EQUIPAMENTOS);
     const abaAlertas = planilha.getSheetByName(NOME_ABA_ALERTAS);
 
+    // Registra alertas pra cada linha inválida
+    linhasInvalidas.forEach(({ linha, motivo }) => {
+      registrarAlerta(abaAlertas, 'Linha invalida na mensagem', '', `${motivo} | linha: ${linha.substring(0, 120)}`);
+    });
+
     const cadastrados = lerEquipamentosCadastrados(abaEquip);
 
-    equipamentosNaMensagem.forEach(eqMsg => {
+    equipamentos.forEach(eqMsg => {
       const cadastrado = cadastrados.find(c => String(c.hgid) === String(eqMsg.hgid));
 
       if (cadastrado) {
@@ -47,12 +43,11 @@ function onFormSubmit(e) {
           abaEquip.getRange(cadastrado.linha, COL.STATUS_ATUAL).setValue(eqMsg.status);
         }
       } else {
-        // HGID novo — tenta criar linha automaticamente
         if (temDadosCompletos(eqMsg)) {
           criarLinhaEquipamento(abaEquip, eqMsg);
         } else {
           registrarAlerta(abaAlertas, 'HGID novo sem dados completos', eqMsg.hgid,
-            `Apareceu na mensagem mas faltam dados (esperado: cliente, data_entrada, prazo_analise, prazo_manutencao). Recebido: ${JSON.stringify(eqMsg)}`);
+            `Apareceu na mensagem mas faltam dados. Recebido: ${JSON.stringify(eqMsg)}`);
         }
       }
     });
@@ -69,50 +64,29 @@ function onFormSubmit(e) {
   }
 }
 
-/**
- * Verifica se um equipamento parseado tem dados suficientes pra ser cadastrado.
- */
 function temDadosCompletos(eq) {
   return !!(eq.hgid && eq.numero_serie && eq.cliente && eq.status &&
             eq.data_entrada && eq.prazo_analise && eq.prazo_manutencao);
 }
 
-/**
- * Cria nova linha na aba equipamentos com os dados da mensagem.
- */
 function criarLinhaEquipamento(aba, eq) {
   aba.appendRow([
-    eq.hgid,
-    eq.numero_serie,
-    eq.cliente,
-    eq.data_entrada,
-    eq.prazo_analise,
-    eq.prazo_manutencao,
-    eq.status,
-    '',  // data_retorno_cliente (Paulo preenche manual depois)
-    ''   // observacoes
+    eq.hgid, eq.numero_serie, eq.cliente,
+    eq.data_entrada, eq.prazo_analise, eq.prazo_manutencao,
+    eq.status, '', ''
   ]);
 }
 
 /**
- * Parse de uma mensagem do Chat. Aceita 3 formatos:
- *
- * Formato 1 — RECOMENDADO (com ponto-vírgula, 6 campos):
- *   HGID. NS ; Cliente ; Status ; Data Entrada ; Prazo Análise ; Prazo Manutenção
- *
- * Formato 2 — legado curto (4 campos, sem datas):
- *   HGID. NS ; Cliente ; Status        OU      HGID. NS Cliente - Status
- *
- * Formato 3 — legado super-curto (só HGID. NS, com header de status acima)
- *
- * @param {string} mensagem
- * @returns {Array<Object>}
+ * Parser flexível. Tenta múltiplos formatos por linha.
+ * Retorna { equipamentos, linhasInvalidas }.
  */
 function parsearMensagem(mensagem) {
-  if (!mensagem) return [];
+  if (!mensagem) return { equipamentos: [], linhasInvalidas: [] };
 
   const linhas = mensagem.split('\n');
-  const resultado = [];
+  const equipamentos = [];
+  const linhasInvalidas = [];
 
   let statusCorrente = null;
   let clienteCorrente = null;
@@ -121,55 +95,58 @@ function parsearMensagem(mensagem) {
     const linha = linhaOriginal.trim();
     if (!linha) return;
 
-    // Cabeçalho de tabela ("HGID. NS" ou variações) — ignora
+    // Cabeçalho da tabela (ignora)
     if (/^HGID\.?\s+NS\.?$/i.test(linha)) return;
 
-    // FORMATO 1: HGID. NS ; Cliente ; Status ; DataEntrada ; PrazoAnalise ; PrazoManutencao
-    const match6 = linha.match(/^(\d{6,9})\.?\s+(\d{8,13})\s*;\s*(.+?)\s*;\s*(.+?)\s*;\s*(.+?)\s*;\s*(.+?)\s*;\s*(.+?)\s*$/);
-    if (match6) {
-      resultado.push({
-        hgid: match6[1],
-        numero_serie: match6[2],
-        cliente: match6[3].trim(),
-        status: mapearStatusRaw(match6[4]),
-        data_entrada: parseData(match6[5]),
-        prazo_analise: parseData(match6[6]),
-        prazo_manutencao: parseData(match6[7])
+    // Estratégia 1: split por ; (formato do técnico)
+    const partesPV = linha.split(';').map(p => p.trim()).filter(p => p.length > 0);
+
+    if (partesPV.length >= 2 && ehHgidValido(partesPV[0]) && ehNsValido(partesPV[1])) {
+      // Formato A: 7 partes — completo (HGID, NS, Cliente, Status, 3 datas)
+      if (partesPV.length === 7) {
+        equipamentos.push({
+          hgid: extrairHgid(partesPV[0]),
+          numero_serie: partesPV[1],
+          cliente: partesPV[2],
+          status: mapearStatusRaw(partesPV[3]),
+          data_entrada: parseData(partesPV[4]),
+          prazo_analise: parseData(partesPV[5]),
+          prazo_manutencao: parseData(partesPV[6])
+        });
+        return;
+      }
+      // Formato B: 4 partes — sem datas (legado)
+      if (partesPV.length === 4) {
+        equipamentos.push({
+          hgid: extrairHgid(partesPV[0]),
+          numero_serie: partesPV[1],
+          cliente: partesPV[2],
+          status: mapearStatusRaw(partesPV[3]),
+          data_entrada: null, prazo_analise: null, prazo_manutencao: null
+        });
+        return;
+      }
+      // Número de partes inesperado: marca como inválida
+      linhasInvalidas.push({
+        linha,
+        motivo: `Esperado 4 ou 7 campos separados por ; , veio ${partesPV.length} campos`
       });
       return;
     }
 
-    // FORMATO 2A: linha com ; mas só cliente + status (sem datas)
-    const match3 = linha.match(/^(\d{6,9})\.?\s+(\d{8,13})\s*;\s*(.+?)\s*;\s*(.+?)\s*$/);
-    if (match3) {
-      resultado.push({
-        hgid: match3[1],
-        numero_serie: match3[2],
-        cliente: match3[3].trim(),
-        status: mapearStatusRaw(match3[4]),
-        data_entrada: null,
-        prazo_analise: null,
-        prazo_manutencao: null
-      });
-      return;
-    }
-
-    // FORMATO 2B: linha com - (formato legado original)
+    // Estratégia 2: linha com traço (legado original)
     const matchTraco = linha.match(/^(\d{6,9})\.\s+(\d{8,13})\s+(.+?)\s+-\s+(.+?)\s*$/);
     if (matchTraco) {
-      resultado.push({
-        hgid: matchTraco[1],
-        numero_serie: matchTraco[2],
+      equipamentos.push({
+        hgid: matchTraco[1], numero_serie: matchTraco[2],
         cliente: matchTraco[3].trim(),
         status: mapearStatusRaw(matchTraco[4]),
-        data_entrada: null,
-        prazo_analise: null,
-        prazo_manutencao: null
+        data_entrada: null, prazo_analise: null, prazo_manutencao: null
       });
       return;
     }
 
-    // FORMATO 3: header de status
+    // Estratégia 3: header de status
     const statusDetectado = detectarStatusHeader(linha);
     if (statusDetectado) {
       statusCorrente = statusDetectado;
@@ -177,17 +154,13 @@ function parsearMensagem(mensagem) {
       return;
     }
 
-    // FORMATO 3: linha curta (só HGID + NS, herda status do header acima)
+    // Estratégia 4: linha curta só com HGID + NS (legado)
     const matchSimples = linha.match(/^(\d{6,9})\.\s+(\d{8,13})\s*$/);
     if (matchSimples) {
-      resultado.push({
-        hgid: matchSimples[1],
-        numero_serie: matchSimples[2],
-        cliente: clienteCorrente,
-        status: statusCorrente,
-        data_entrada: null,
-        prazo_analise: null,
-        prazo_manutencao: null
+      equipamentos.push({
+        hgid: matchSimples[1], numero_serie: matchSimples[2],
+        cliente: clienteCorrente, status: statusCorrente,
+        data_entrada: null, prazo_analise: null, prazo_manutencao: null
       });
       return;
     }
@@ -198,7 +171,19 @@ function parsearMensagem(mensagem) {
     }
   });
 
-  return resultado;
+  return { equipamentos, linhasInvalidas };
+}
+
+function ehHgidValido(s) {
+  return /^\d{6,9}\.?$/.test(s.trim());
+}
+
+function ehNsValido(s) {
+  return /^\d{8,13}$/.test(s.trim());
+}
+
+function extrairHgid(s) {
+  return s.trim().replace(/\.$/, '');
 }
 
 function detectarStatusHeader(linha) {
@@ -206,6 +191,7 @@ function detectarStatusHeader(linha) {
   if (l.includes('pós calibração') || l.includes('pos calibracao')) return 'Pós-calibração';
   if (l.includes('pré calibração') || l.includes('pre calibracao')) return 'Pré-calibração';
   if (l.includes('calibrando')) return 'Em calibração';
+  if (l.includes('manutenção') || l.includes('manutencao')) return 'Manutenção';
   return null;
 }
 
@@ -215,19 +201,38 @@ function mapearStatusRaw(statusRaw) {
   if (l.includes('pós calibração') || l.includes('pos calibracao')) return 'Pós-calibração';
   if (l.includes('pré calibração') || l.includes('pre calibracao')) return 'Pré-calibração';
   if (l.includes('calibrando') || l.includes('em calibração') || l.includes('em calibracao')) return 'Em calibração';
+  if (l.includes('manutenção') || l.includes('manutencao')) return 'Manutenção';
   return null;
 }
 
 /**
- * Parse uma data em formatos PT-BR comuns:
- *   "15/05/2026", "15-05-2026", "15.05.2026", "2026-05-15"
- * Retorna Date ou null.
+ * Parse data em vários formatos:
+ *   "DDMMAA"     → "150526"
+ *   "DDMMAAAA"   → "15052026"
+ *   "DD/MM/AA"   → "15/05/26"
+ *   "DD/MM/AAAA" → "15/05/2026"
+ *   "DD-MM-AAAA", "DD.MM.AAAA"
+ *   "AAAA-MM-DD" (ISO)
  */
 function parseData(str) {
   if (!str) return null;
-  const s = str.trim();
+  const s = String(str).trim();
 
-  // Formato DD/MM/AAAA ou DD-MM-AAAA ou DD.MM.AAAA
+  // Só dígitos: DDMMAA (6) ou DDMMAAAA (8)
+  if (/^\d{6}$/.test(s)) {
+    const dia = Number(s.substring(0, 2));
+    const mes = Number(s.substring(2, 4));
+    const ano = 2000 + Number(s.substring(4, 6));
+    return new Date(ano, mes - 1, dia);
+  }
+  if (/^\d{8}$/.test(s)) {
+    const dia = Number(s.substring(0, 2));
+    const mes = Number(s.substring(2, 4));
+    const ano = Number(s.substring(4, 8));
+    return new Date(ano, mes - 1, dia);
+  }
+
+  // Com separador: DD/MM/AAAA, DD-MM-AAAA, DD.MM.AAAA, DD/MM/AA
   let m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/);
   if (m) {
     let ano = Number(m[3]);
@@ -235,11 +240,9 @@ function parseData(str) {
     return new Date(ano, Number(m[2]) - 1, Number(m[1]));
   }
 
-  // Formato AAAA-MM-DD (ISO)
+  // ISO: AAAA-MM-DD
   m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (m) {
-    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  }
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 
   return null;
 }
@@ -247,7 +250,6 @@ function parseData(str) {
 function lerEquipamentosCadastrados(aba) {
   const ultimaLinha = aba.getLastRow();
   if (ultimaLinha < 2) return [];
-
   const valores = aba.getRange(2, 1, ultimaLinha - 1, 9).getValues();
   const cadastrados = [];
   valores.forEach((linha, idx) => {
@@ -282,7 +284,8 @@ function verificarHGIDsSumidos(planilha) {
   const cadastrados = lerEquipamentosCadastrados(abaEquip);
   cadastrados.forEach(eq => {
     const aparece = ultimas.some(submissao => {
-      return parsearMensagem(submissao[1]).some(eqMsg => eqMsg.hgid === eq.hgid);
+      const { equipamentos } = parsearMensagem(submissao[1]);
+      return equipamentos.some(eqMsg => eqMsg.hgid === eq.hgid);
     });
     if (!aparece) {
       if (!alertaJaRegistradoHoje(planilha, 'HGID sumido', eq.hgid)) {
@@ -318,33 +321,41 @@ function alertaJaRegistradoHoje(planilha, tipo, hgid) {
   });
 }
 
-/**
- * Executar manualmente no editor: menu suspenso → testParser → Executar.
- */
 function testParser() {
-  // Mensagem com formato novo (6 campos)
-  const exemplo = `26050604. 202508220004 ; Fernando Jorge ; Pré Calibração ; 15/05/2026 ; 22/05/2026 ; 08/06/2026
-26043007. 202506130016 ; Sem cliente ; Em Calibração ; 10/05/2026 ; 17/05/2026 ; 03/06/2026
-26050613. 202511250002 ; C e F Sinkos / Camila Sinkos ; Pós Calibração ; 01/05/2026 ; 08/05/2026 ; 25/05/2026`;
+  // Mensagem real do técnico (2026-05-26) — formato com ; entre todos os campos
+  const exemplo = `25090909;202509190005; Aline Carbone Casado; Manutenção;150526;210526;020626;
+26010806;202601210004;Jankarla Salazar; Manutenção;180526;220526;030626;
+00000000;202506130011;Eloi Pereira Teles; Manutenção;200526;270526;270526;080626;
+26043003;202503020007; Marcelo Kalichstein; Calibrando;170426;290426;100526`;
 
   const r = parsearMensagem(exemplo);
-  console.log(`Parseados: ${r.length}`);
-  r.forEach((eq, i) => {
-    console.log(`${i+1}. HGID=${eq.hgid} Cliente=${eq.cliente} Status=${eq.status} Entrada=${eq.data_entrada?.toLocaleDateString('pt-BR')} PrazoAna=${eq.prazo_analise?.toLocaleDateString('pt-BR')} PrazoMan=${eq.prazo_manutencao?.toLocaleDateString('pt-BR')}`);
+  console.log(`Parseados: ${r.equipamentos.length}, inválidas: ${r.linhasInvalidas.length}`);
+  r.equipamentos.forEach((eq, i) => {
+    console.log(`${i+1}. HGID=${eq.hgid} Cliente=${eq.cliente} Status=${eq.status} Entrada=${eq.data_entrada?.toLocaleDateString('pt-BR')} PrazoMan=${eq.prazo_manutencao?.toLocaleDateString('pt-BR')}`);
+  });
+  r.linhasInvalidas.forEach(({ linha, motivo }) => {
+    console.log(`  ✗ INVÁLIDA: ${motivo} → ${linha.substring(0, 60)}...`);
   });
 
-  if (r.length !== 3) { console.error('FALHOU: esperava 3'); return; }
-  if (r[0].cliente !== 'Fernando Jorge') { console.error('FALHOU eq 1 cliente'); return; }
-  if (r[0].status !== 'Pré-calibração') { console.error('FALHOU eq 1 status'); return; }
-  if (!r[0].data_entrada || r[0].data_entrada.getDate() !== 15) { console.error('FALHOU eq 1 data_entrada'); return; }
-  if (!r[0].prazo_manutencao || r[0].prazo_manutencao.getMonth() !== 5) { console.error('FALHOU eq 1 prazo_manutencao'); return; }
-  if (r[2].cliente !== 'C e F Sinkos / Camila Sinkos') { console.error('FALHOU eq 3 cliente'); return; }
-
-  // Teste de compatibilidade com formato legado (sem datas)
-  const legado = `26050604. 202508220004 ; Fernando Jorge ; Pré Calibração`;
-  const rLeg = parsearMensagem(legado);
-  if (rLeg.length !== 1 || rLeg[0].data_entrada !== null) {
-    console.error('FALHOU compat legado'); return;
+  if (r.equipamentos.length !== 3) {
+    console.error(`FALHOU: esperava 3 válidos, veio ${r.equipamentos.length}`);
+    return;
+  }
+  if (r.linhasInvalidas.length !== 1) {
+    console.error(`FALHOU: esperava 1 inválida (linha com 4 datas), veio ${r.linhasInvalidas.length}`);
+    return;
+  }
+  if (r.equipamentos[0].status !== 'Manutenção') {
+    console.error(`FALHOU: eq 1 status esperado Manutenção, veio ${r.equipamentos[0].status}`);
+    return;
+  }
+  if (r.equipamentos[0].data_entrada?.getDate() !== 15) {
+    console.error(`FALHOU: eq 1 data_entrada esperada dia 15, veio ${r.equipamentos[0].data_entrada}`);
+    return;
+  }
+  if (r.equipamentos[2].status !== 'Em calibração') {
+    console.error(`FALHOU: eq 3 status esperado Em calibração, veio ${r.equipamentos[2].status}`);
+    return;
   }
 
   console.log('✓ Todos os testes passaram');
